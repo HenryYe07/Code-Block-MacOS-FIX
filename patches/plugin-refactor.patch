@@ -1,0 +1,1318 @@
+--- a/src/plugins/codecompletion/ccoptionsdlg.cpp
++++ b/src/plugins/codecompletion/ccoptionsdlg.cpp
+@@ -38,6 +38,10 @@
+ #include "ccoptionsdlg.h"
+ #include "codecompletion.h"
+ #include "doxygen_parser.h" // For DocumentationHelper
++
++
++namespace CodeCompletionInternals
++{
+ 
+ static const wxString g_SampleClasses =
+     _T("class A_class"
+@@ -429,3 +433,5 @@
+ 
+     return true;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/ccoptionsprjdlg.cpp
++++ b/src/plugins/codecompletion/ccoptionsprjdlg.cpp
+@@ -25,6 +25,10 @@
+ #include <editpathdlg.h>
+ 
+ #include "ccoptionsprjdlg.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ BEGIN_EVENT_TABLE(CCOptionsProjectDlg, wxPanel)
+     EVT_UPDATE_UI(-1, CCOptionsProjectDlg::OnUpdateUI)
+@@ -132,3 +136,5 @@
+                        _("Information"), wxICON_INFORMATION);
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/cctreectrl.cpp
++++ b/src/plugins/codecompletion/cctreectrl.cpp
+@@ -18,6 +18,10 @@
+ #include <wx/gdicmn.h> // wxPoint, wxSize
+ 
+ #include "cctreectrl.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ // class CCTreeCtrlData
+ 
+@@ -183,3 +187,5 @@
+     CCLogger::Get()->DebugLog(wxString::Format("RemoveDoubles took: %ld ms", sw.Time()));
+ #endif
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/classbrowser.cpp
++++ b/src/plugins/codecompletion/classbrowser.cpp
+@@ -48,6 +48,10 @@
+ 
+ //unused-#include <stack>
+ #include <chrono>
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_CLASS_BROWSER_DEBUG_OUTPUT 0
+ 
+@@ -1435,3 +1439,5 @@
+ 
+     m_ClassBrowserCallAfterSemaphore.Post(); //say we did it;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/classbrowserbuilderthread.cpp
++++ b/src/plugins/codecompletion/classbrowserbuilderthread.cpp
+@@ -28,6 +28,10 @@
+ 
+ #include "classbrowserbuilderthread.h"
+ #include "classbrowser.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ // sanity check for the build tree functions, this function should only be called in a worker thread
+ // also, there should be no termination requested, otherwise, it will return false
+@@ -1582,3 +1586,5 @@
+         CalculateCrc32(child, crc);
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/codecompletion.cpp
++++ b/src/plugins/codecompletion/codecompletion.cpp
+@@ -61,6 +61,10 @@
+ #include "parser/tokenizer.h"
+ #include "doxygen_parser.h" // for DocumentationPopup and DoxygenParser
+ #include "gotofunctiondlg.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_CODECOMPLETION_DEBUG_OUTPUT 0
+ 
+@@ -445,6 +449,27 @@
+ void CodeCompletion::OnAttach()
+ // ----------------------------------------------------------------------------
+ {
++    ResetSessionState();
++
++    // read options from configure file
++    RereadOptions();
++
++    // Events which m_ParseManager does not handle will go to the the next event
++    // handler which is the instance of a CodeCompletion.
++    m_ParseManager.SetNextHandler(this);
++
++    RegisterEditorEvents();
++    m_DocHelper.OnAttach();
++
++    // UI and parsing start only after the application has built its main frame.
++    // Plugins enabled later must initialize immediately: no startup event follows.
++    if (Manager::IsAppStartedUp())
++        InitializeSession();
++}
++
++void CodeCompletion::ResetSessionState()
++{
++    m_InitDone = false;
+     m_EditMenu    = 0;
+     m_SearchMenu  = 0;
+     m_ViewMenu    = 0;
+@@ -460,15 +485,10 @@
+ 
+     m_LastFile.clear();
+ 
+-    // read options from configure file
+-    RereadOptions();
+-
+-    // Events which m_ParseManager does not handle will go to the the next event
+-    // handler which is the instance of a CodeCompletion.
+-    m_ParseManager.SetNextHandler(this);
+-
+-    m_ParseManager.CreateClassBrowser();
+-
++}
++
++void CodeCompletion::RegisterEditorEvents()
++{
+     // hook to editors
+     // both ccmanager and cc have hooks, but they don't conflict. ccmanager are mainly
+     // hooking to the event such as key stroke or mouse dwell events, so the code completion, call tip
+@@ -497,11 +517,20 @@
+     pm->RegisterEventSink(cbEVT_EDITOR_ACTIVATED,     new cbEventFunctor<CodeCompletion, CodeBlocksEvent>(this, &CodeCompletion::OnEditorActivated));
+     pm->RegisterEventSink(cbEVT_EDITOR_CLOSE,         new cbEventFunctor<CodeCompletion, CodeBlocksEvent>(this, &CodeCompletion::OnEditorClosed));
+ 
+-    m_DocHelper.OnAttach();
++}
++
++void CodeCompletion::InitializeSession()
++{
++    if (m_InitDone || Manager::IsAppShuttingDown())
++        return;
++
++    m_ParseManager.CreateClassBrowser();
++    DoParseOpenedProjectAndActiveEditor();
+ }
+ 
+ void CodeCompletion::OnRelease(bool appShutDown)
+ {
++    m_InitDone = false;
+     m_ParseManager.RemoveClassBrowser(appShutDown);
+     m_ParseManager.ClearParsers();
+ 
+@@ -2182,8 +2211,7 @@
+ 
+ void CodeCompletion::OnAppDoneStartup(CodeBlocksEvent& event)
+ {
+-    if (!m_InitDone)
+-        DoParseOpenedProjectAndActiveEditor();
++    InitializeSession();
+ 
+     event.Skip();
+ }
+@@ -3547,3 +3575,5 @@
+     m_images[key] = bitmap;
+     return bitmap;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/coderefactoring.cpp
++++ b/src/plugins/codecompletion/coderefactoring.cpp
+@@ -32,6 +32,10 @@
+ 
+ #include "coderefactoring.h"
+ #include "parsemanager.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_CODEREFACTORING_DEBUG_OUTPUT 0
+ 
+@@ -570,3 +574,5 @@
+             files.Add(edMan->GetEditor(i)->GetFilename());
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/doxygen_parser.cpp
++++ b/src/plugins/codecompletion/doxygen_parser.cpp
+@@ -26,6 +26,10 @@
+ 
+ #include "cbcolourmanager.h"
+ #include "codecompletion.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ // Doxygen documents parser
+ namespace Doxygen
+@@ -1013,3 +1017,5 @@
+ }
+ 
+ //end of Documentation popup functions
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/gotofunctiondlg.cpp
++++ b/src/plugins/codecompletion/gotofunctiondlg.cpp
+@@ -20,6 +20,10 @@
+     #include "configmanager.h"
+     #include <algorithm>
+ #endif
++
++
++namespace CodeCompletionInternals
++{
+ //(*InternalHeaders(GotoFunctionDlg)
+ //*)
+ 
+@@ -211,3 +215,5 @@
+ {
+     return m_handler.GetSelection();
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/insertclassmethoddlg.cpp
++++ b/src/plugins/codecompletion/insertclassmethoddlg.cpp
+@@ -26,6 +26,10 @@
+ 
+ #include "parser/parser.h"
+ 
++
++namespace CodeCompletionInternals
++{
++
+ namespace InsertClassMethodDlgHelper
+ {
+     inline void DoFillMethodsFor(wxCheckListBox* clb, Token* parentToken, const wxString& ns, bool includePrivate,
+@@ -193,3 +197,5 @@
+ {
+     FillMethods();
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parsemanager.cpp
++++ b/src/plugins/codecompletion/parsemanager.cpp
+@@ -43,6 +43,10 @@
+ #include "classbrowser.h"
+ #include "parser/parser.h"
+ #include "parser/profiletimer.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_PARSEMANAGER_DEBUG_OUTPUT 0
+ 
+@@ -2798,3 +2802,5 @@
+ 
+     return &m_ActiveParserList;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parsemanager_base.cpp
++++ b/src/plugins/codecompletion/parsemanager_base.cpp
+@@ -16,6 +16,10 @@
+ #include "parser/tokenizer.h"
+ 
+ #include "parser/cclogger.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_PARSEMANAGERBASE_DEBUG_OUTPUT 0
+ 
+@@ -1715,10 +1719,10 @@
+ 
+         if (found) break; // exit for-loop
+ 
+-        TRACE(wxString::Format("GetTokenFromCurrentLine() Function out of bounds: tN='%s', tF='%s', tStart=%u, "
+-                               "tEnd=%u, line=%zu (size_t)line=%zu"), token->DisplayName(),
+-                               token->GetFilename(), token->m_ImplLineStart, token->m_ImplLineEnd,
+-                               curLine, curLine);
++        TRACE("GetTokenFromCurrentLine() Function out of bounds: tN='%s', tF='%s', tStart=%u, "
++              "tEnd=%u, line=%zu (size_t)line=%zu", token->DisplayName().wx_str(),
++              token->GetFilename().wx_str(), token->m_ImplLineStart, token->m_ImplLineEnd,
++              curLine, curLine);
+     }
+ 
+     if (classToken)
+@@ -1892,3 +1896,5 @@
+     }
+     return true;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/selectincludefile.cpp
++++ b/src/plugins/codecompletion/selectincludefile.cpp
+@@ -12,6 +12,10 @@
+ 
+ #include <wx/xrc/xmlres.h>
+ #include <wx/arrstr.h>
++
++
++namespace CodeCompletionInternals
++{
+ 
+ BEGIN_EVENT_TABLE(SelectIncludeFile,wxScrollingDialog)
+     EVT_LISTBOX_DCLICK(XRCID("ID_LBX_INCLUDE_FILES"),SelectIncludeFile::OnOk)
+@@ -50,3 +54,5 @@
+     LstIncludeFiles->InsertItems(IncludeFiles, 0);
+     LstIncludeFiles->SetSelection(0);
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/systemheadersthread.cpp
++++ b/src/plugins/codecompletion/systemheadersthread.cpp
+@@ -17,6 +17,10 @@
+ #endif
+ 
+ #include "systemheadersthread.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_SYSTEMHEADERSTHREAD_DEBUG_OUTPUT 0
+ 
+@@ -342,3 +346,5 @@
+         return wxDIR_IGNORE;
+     return wxDIR_CONTINUE;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/ccdebuginfo.cpp
++++ b/src/plugins/codecompletion/parser/ccdebuginfo.cpp
+@@ -31,6 +31,10 @@
+ 
+ #include "ccdebuginfo.h"
+ #include "parser.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_DEBUGINFO_DEBUG_OUTPUT 0
+ 
+@@ -849,3 +853,5 @@
+         ed->GotoLine(line);
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/cclogger.cpp
++++ b/src/plugins/codecompletion/parser/cclogger.cpp
+@@ -15,6 +15,10 @@
+ 
+ #include <logmanager.h> // F()
+ #include <globals.h>    // cbC2U for cbAssert macro
++
++
++namespace CodeCompletionInternals
++{
+ 
+ std::unique_ptr<CCLogger> CCLogger::s_Inst;
+ 
+@@ -106,3 +110,5 @@
+     wxPostEvent(m_Parent, evt);
+ #endif
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/parser.cpp
++++ b/src/plugins/codecompletion/parser/parser.cpp
+@@ -41,6 +41,10 @@
+ #ifndef CB_PRECOMP
+     #include "editorbase.h"
+ #endif
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_PARSER_DEBUG_OUTPUT 0
+ 
+@@ -1056,3 +1060,5 @@
+             (*it)->Abort();
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/parser_base.cpp
++++ b/src/plugins/codecompletion/parser/parser_base.cpp
+@@ -9,6 +9,10 @@
+ #include <cbstyledtextctrl.h>
+ 
+ #include "parser_base.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ 
+ #define CC_PARSER_BASE_DEBUG_OUTPUT 0
+@@ -403,3 +407,5 @@
+ 
+     return tokens_found;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/parserthread.cpp
++++ b/src/plugins/codecompletion/parser/parserthread.cpp
+@@ -27,6 +27,10 @@
+ #include "parserthread.h"
+ #include "parser.h"
+ #include "expression.h" // used to calculate the enumerator value
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_PARSERTHREAD_DEBUG_OUTPUT 0
+ 
+@@ -3874,3 +3878,5 @@
+ 
+     return str;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/parserthreadedtask.cpp
++++ b/src/plugins/codecompletion/parser/parserthreadedtask.cpp
+@@ -21,6 +21,10 @@
+ #include "cclogger.h"
+ #include "parser.h"
+ #include "tokentree.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_PARSERTHREADEDTASK_DEBUG_OUTPUT 0
+ 
+@@ -143,3 +147,5 @@
+ 
+     return 0;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/profiletimer.cpp
++++ b/src/plugins/codecompletion/parser/profiletimer.cpp
+@@ -11,6 +11,10 @@
+ 
+ #include "manager.h"
+ #include "logmanager.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ ProfileTimer::ProfileMap ProfileTimer::m_ProfileMap;
+ 
+@@ -64,3 +68,5 @@
+         it->first->Zero();
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/token.cpp
++++ b/src/plugins/codecompletion/parser/token.cpp
+@@ -13,6 +13,10 @@
+ #include "tokentree.h"
+ 
+ #include "token.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_TOKEN_DEBUG_OUTPUT 0
+ 
+@@ -341,3 +345,5 @@
+         default:          return wxEmptyString;
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/tokenizer.cpp
++++ b/src/plugins/codecompletion/parser/tokenizer.cpp
+@@ -22,6 +22,10 @@
+ #include "expression.h"
+ #include "tokenizer.h"
+ #include "tokentree.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_TOKENIZER_DEBUG_OUTPUT 0
+ 
+@@ -2094,3 +2098,5 @@
+     // this will append the doxygen style comments to the Token
+     SetLastTokenIdx(token->m_Index);
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/tokentree.cpp
++++ b/src/plugins/codecompletion/parser/tokentree.cpp
+@@ -14,6 +14,10 @@
+ #include <set>
+ 
+ #include "cclogger.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_TOKENTREE_DEBUG_OUTPUT 0
+ 
+@@ -974,3 +978,5 @@
+         return wxEmptyString;
+     return tk->m_Doc + tk->m_ImplDoc;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/searchtree.cpp
++++ b/src/plugins/codecompletion/parser/searchtree.cpp
+@@ -9,6 +9,10 @@
+ 
+ #include <sdk.h>
+ #include "searchtree.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ // *** SearchTreeIterator ***
+ 
+@@ -1062,3 +1066,5 @@
+     m_Nodes[0]->Dump(this, 0, _T(""), result);
+     return result;
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/parser/expression.cpp
++++ b/src/plugins/codecompletion/parser/expression.cpp
+@@ -21,6 +21,10 @@
+ #include "cclogger.h"
+ #include "expression.h"
+ #include "token.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CC_EXPRESSION_DEBUG_OUTPUT 0
+ 
+@@ -513,3 +517,5 @@
+             return 0;
+     }
+ }
++
++} // namespace CodeCompletionInternals
+--- a/src/plugins/codecompletion/ccoptionsdlg.h
++++ b/src/plugins/codecompletion/ccoptionsdlg.h
+@@ -11,6 +11,10 @@
+ #include <settings.h>
+ #include "parsemanager.h"
+ #include "parser/parser.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ class CodeCompletion;
+ class DocumentationHelper;
+@@ -43,4 +47,7 @@
+     DECLARE_EVENT_TABLE()
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CCOPTIONSDLG_H
+--- a/src/plugins/codecompletion/ccoptionsprjdlg.h
++++ b/src/plugins/codecompletion/ccoptionsprjdlg.h
+@@ -13,6 +13,10 @@
+ #include "parser/parser.h"
+ 
+ class cbProject;
++
++namespace CodeCompletionInternals
++{
++
+ 
+ class CCOptionsProjectDlg : public cbConfigurationPanel
+ {
+@@ -40,4 +44,7 @@
+     DECLARE_EVENT_TABLE()
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CCOPTIONSPRJDLG_H
+--- a/src/plugins/codecompletion/cctreectrl.h
++++ b/src/plugins/codecompletion/cctreectrl.h
+@@ -16,6 +16,10 @@
+ class wxPoint;
+ class wxSize;
+ class wxWindow;
++
++namespace CodeCompletionInternals
++{
++
+ 
+ class Token;
+ 
+@@ -114,4 +118,7 @@
+     DECLARE_DYNAMIC_CLASS(CCTreeCtrl)
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CCTREECTRL
+--- a/src/plugins/codecompletion/classbrowser.h
++++ b/src/plugins/codecompletion/classbrowser.h
+@@ -17,11 +17,15 @@
+ #include "parser/parser.h"
+ #include "parser/token.h"
+ 
+-class ParseManager;
+ class wxComboBox;
+ class wxTreeCtrl;
+ class wxTextCtrl;
+ class cbProject;
++
++namespace CodeCompletionInternals
++{
++
++class ParseManager;
+ 
+ /** symbol browser panel is shown in the Management panel besides projects browser panel.
+  *
+@@ -253,4 +257,7 @@
+     DECLARE_EVENT_TABLE()
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CLASSBROWSER_H
+--- a/src/plugins/codecompletion/classbrowserbuilderthread.h
++++ b/src/plugins/codecompletion/classbrowserbuilderthread.h
+@@ -13,6 +13,10 @@
+ #include "parsemanager.h"
+ #include "parser/token.h"
+ #include "parser/parser.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define CRC32_CCITT       0x04C11DB7
+ 
+@@ -336,4 +340,7 @@
+     uint32_t         m_bottomCrc32;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CLASSBROWSERBUILDERTHREAD_H
+--- a/src/plugins/codecompletion/codecompletion.h
++++ b/src/plugins/codecompletion/codecompletion.h
+@@ -29,6 +29,10 @@
+ class cbEditor;
+ class wxScintillaEvent;
+ class wxChoice;
++
++namespace CodeCompletionInternals
++{
++
+ class DocumentationHelper;
+ 
+ /** Code completion plugin has those features:
+@@ -148,6 +152,10 @@
+     void RereadOptions(); // called by the configuration panel
+ 
+ private:
++    void ResetSessionState();
++    void RegisterEditorEvents();
++    void InitializeSession();
++
+     /** update CC's ToolBar, the user may disable the first wxChoice, so we need to recreate the
+      * wxChoice and measure the best fit size
+      */
+@@ -553,6 +561,9 @@
+     DECLARE_EVENT_TABLE()
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CODECOMPLETION_H
+ 
+ //Version
+--- a/src/plugins/codecompletion/coderefactoring.h
++++ b/src/plugins/codecompletion/coderefactoring.h
+@@ -7,6 +7,10 @@
+ #define CODEREFACTORING_H
+ 
+ #include "parsemanager.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ struct crSearchData
+ {
+@@ -51,4 +55,7 @@
+     SearchDataMap m_SearchDataMap;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CODEREFACTORING_H
+--- a/src/plugins/codecompletion/doxygen_parser.h
++++ b/src/plugins/codecompletion/doxygen_parser.h
+@@ -16,13 +16,17 @@
+ 
+ #include "parser/token.h" // TokenIdxSet
+ 
++class cbEditor;
++class ConfigManager;
++class wxHtmlLinkEvent;
++
++namespace CodeCompletionInternals
++{
++
+ class CodeCompletion;
+ class TokenTree;
+ 
+-class cbEditor;
+-class ConfigManager;
+ 
+-class wxHtmlLinkEvent;
+ 
+ namespace Doxygen
+ {
+@@ -160,4 +164,7 @@
+     bool m_Enabled;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif //DOXYGENPARSER_H
+--- a/src/plugins/codecompletion/gotofunctiondlg.h
++++ b/src/plugins/codecompletion/gotofunctiondlg.h
+@@ -20,6 +20,10 @@
+ //*)
+ 
+ #include "incremental_select_helper.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ /** The goto function dialog allow user to type a function name, and filter out the functions
+  *
+@@ -102,4 +106,7 @@
+         DECLARE_EVENT_TABLE()
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif
+--- a/src/plugins/codecompletion/insertclassmethoddlg.h
++++ b/src/plugins/codecompletion/insertclassmethoddlg.h
+@@ -11,11 +11,15 @@
+ 
+ #include "scrollingdialog.h"
+ 
++class wxCheckListBox;
++class wxCommandEvent;
++
++namespace CodeCompletionInternals
++{
++
+ class Parser;
+ class ParserBase;
+ class Token;
+-class wxCheckListBox;
+-class wxCommandEvent;
+ 
+ // When instance this class, *MUST* entered a critical section, and should call ShowModal() rather than the other
+ class InsertClassMethodDlg : public wxScrollingDialog
+@@ -40,5 +44,8 @@
+     DECLARE_EVENT_TABLE();
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // INSERTCLASSMETHODDLG_H
+ 
+--- a/src/plugins/codecompletion/parsemanager.h
++++ b/src/plugins/codecompletion/parsemanager.h
+@@ -16,15 +16,19 @@
+ 
+ #include <wx/event.h>
+ 
+-extern const int g_EditorActivatedDelay;
+-
+-// forward declaration
+ class cbEditor;
+ class EditorBase;
+ class cbProject;
+ class cbStyledTextCtrl;
++class Compiler;
++
++namespace CodeCompletionInternals
++{
++
++extern const int g_EditorActivatedDelay;
++
++// forward declaration
+ class ClassBrowser;
+-class Compiler;
+ class Token;
+ 
+ // TODO (ollydbg#1#), this class is dirty, I'm going to change its name like CursorLocation
+@@ -551,5 +555,8 @@
+ 
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // PARSEMANAGER_H
+ 
+--- a/src/plugins/codecompletion/parsemanager_base.h
++++ b/src/plugins/codecompletion/parsemanager_base.h
+@@ -14,6 +14,10 @@
+ 
+ #include "parser/token.h"
+ #include "parser/tokentree.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ class ParseManagerBase
+ {
+@@ -748,4 +752,7 @@
+     std::map<wxString, wxString> m_TemplateMap;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // PARSEMANAGER_BASE_H
+--- a/src/plugins/codecompletion/selectincludefile.h
++++ b/src/plugins/codecompletion/selectincludefile.h
+@@ -17,6 +17,10 @@
+     #include <wx/sizer.h>
+     #include <wx/xrc/xmlres.h>
+ #endif
++
++
++namespace CodeCompletionInternals
++{
+ 
+ class SelectIncludeFile: public wxScrollingDialog
+ {
+@@ -38,4 +42,7 @@
+     DECLARE_EVENT_TABLE()
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // SELECTINCLUDEFILE_H
+--- a/src/plugins/codecompletion/systemheadersthread.h
++++ b/src/plugins/codecompletion/systemheadersthread.h
+@@ -15,6 +15,10 @@
+ #include "parser/parser.h" // StringSet
+ 
+ class wxEvtHandler;
++
++namespace CodeCompletionInternals
++{
++
+ 
+ /** dir to files map, for example, you have two dirs c:/a and c:/b
+  * so the map looks like:
+@@ -46,4 +50,7 @@
+     wxArrayString      m_IncludeDirs;  ///added include dirs to system headers
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // SYSTEMHEADERSTHREAD_H
+--- a/src/plugins/codecompletion/parser/ccdebuginfo.h
++++ b/src/plugins/codecompletion/parser/ccdebuginfo.h
+@@ -19,6 +19,10 @@
+ #include <wx/statline.h>
+ #include <wx/stattext.h>
+ #include <wx/textctrl.h>
++
++
++namespace CodeCompletionInternals
++{
+ //*)
+ 
+ class ParserBase;
+@@ -137,4 +141,7 @@
+     DECLARE_EVENT_TABLE()
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif
+--- a/src/plugins/codecompletion/parser/cclogger.h
++++ b/src/plugins/codecompletion/parser/cclogger.h
+@@ -16,6 +16,10 @@
+ #include <prep.h>        // nullptr
+ 
+ class wxEvtHandler;
++
++namespace CodeCompletionInternals
++{
++
+ 
+ #ifndef CC_PROCESS_LOG_EVENT_TO_PARENT
+     #define CC_PROCESS_LOG_EVENT_TO_PARENT 0
+@@ -185,4 +189,7 @@
+     #define CC_LOCKER_TRACK_P_MTX_UNLOCK     CC_LOCKER_TRACK_TT_MTX_UNLOCK
+ #endif
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // CCLOGGER_H
+--- a/src/plugins/codecompletion/parser/parser.h
++++ b/src/plugins/codecompletion/parser/parser.h
+@@ -21,6 +21,10 @@
+ 
+ #include "parserthread.h"
+ #include "parser_base.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ #define PARSER_IMG_NONE                        -2
+ #define PARSER_IMG_CLASS_FOLDER                 0
+@@ -372,4 +376,7 @@
+     void AbortParserThreads();
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // PARSER_H
+--- a/src/plugins/codecompletion/parser/parser_base.h
++++ b/src/plugins/codecompletion/parser/parser_base.h
+@@ -13,6 +13,10 @@
+ #include <wx/treectrl.h>
+ 
+ #include "parserthread.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ // no browser related class!
+ 
+@@ -212,4 +216,7 @@
+     wxArrayString        m_IncludeDirs;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif
+--- a/src/plugins/codecompletion/parser/parserthread.h
++++ b/src/plugins/codecompletion/parser/parserthread.h
+@@ -22,6 +22,10 @@
+ #include "tokenizer.h"
+ #include "token.h"
+ #include "tokentree.h"
++
++
++namespace CodeCompletionInternals
++{
+ 
+ 
+ struct NameSpace
+@@ -477,4 +481,7 @@
+     size_t               m_EnumUnnamedCount;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // PARSERTHREAD_H
+--- a/src/plugins/codecompletion/parser/parserthreadedtask.h
++++ b/src/plugins/codecompletion/parser/parserthreadedtask.h
+@@ -10,8 +10,12 @@
+ 
+ #include <cbthreadpool.h>
+ 
++class cbProject;
++
++namespace CodeCompletionInternals
++{
++
+ class Parser;
+-class cbProject;
+ 
+ /** a cbThreadedTask can be executed in cbThreadPool to do a lot of parsing jobs in
+  * the begining stage of the batch parsing. Here, the files and the macro definition
+@@ -50,4 +54,7 @@
+     cbProject* m_Project; /// mutex to access the Parser object
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // PARSERTHREADEDTASK_H
+--- a/src/plugins/codecompletion/parser/profiletimer.h
++++ b/src/plugins/codecompletion/parser/profiletimer.h
+@@ -10,6 +10,10 @@
+ #include <wx/string.h>
+ 
+ #include <map>
++
++
++namespace CodeCompletionInternals
++{
+ 
+ //#define CC_PARSER_PROFILE_TEST 1
+ 
+@@ -58,4 +62,7 @@
+     static ProfileMap                             m_ProfileMap;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // PROFILETIMER_H
+--- a/src/plugins/codecompletion/parser/token.h
++++ b/src/plugins/codecompletion/parser/token.h
+@@ -11,6 +11,10 @@
+ 
+ #include <set>
+ #include <map>
++
++
++namespace CodeCompletionInternals
++{
+ 
+ class Token;
+ class TokenTree;
+@@ -312,4 +316,7 @@
+     size_t                       m_Ticket;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // TOKEN_H
+--- a/src/plugins/codecompletion/parser/tokenizer.h
++++ b/src/plugins/codecompletion/parser/tokenizer.h
+@@ -13,6 +13,10 @@
+ 
+ #include <stack>
+ #include <list>
++
++
++namespace CodeCompletionInternals
++{
+ 
+ 
+ /// Enum defines the skip state of the Tokenizer
+@@ -661,4 +665,7 @@
+     bool m_ReadingMacroDefinition;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // TOKENIZER_H
+--- a/src/plugins/codecompletion/parser/tokentree.h
++++ b/src/plugins/codecompletion/parser/tokentree.h
+@@ -14,6 +14,16 @@
+ 
+ #include "token.h"
+ #include "searchtree.h"
++
++
++#ifdef CC_PARSER_TEST
++class CCTest;
++class CCTestFrame;
++class ParseManagerTest;
++#endif
++
++namespace CodeCompletionInternals
++{
+ 
+ enum FileParsingStatus
+ { fpsNotParsed = 0, fpsAssigned, fpsBeingParsed, fpsDone };
+@@ -37,9 +47,11 @@
+ class TokenTree
+ {
+     friend class CCDebugInfo;
+-    friend class CCTest;
+-    friend class CCTestFrame;
+-    friend class ParseManagerTest;
++#ifdef CC_PARSER_TEST
++    friend class ::CCTest;
++    friend class ::CCTestFrame;
++    friend class ::ParseManagerTest;
++#endif
+ public:
+ 
+     TokenTree();
+@@ -378,4 +390,7 @@
+     TokenFileSet        m_FilesToBeReparsed;
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // TOKENTREE_H
+--- a/src/plugins/codecompletion/parser/searchtree.h
++++ b/src/plugins/codecompletion/parser/searchtree.h
+@@ -12,6 +12,10 @@
+ #include <vector>
+ #include <map>
+ #include <set>
++
++
++namespace CodeCompletionInternals
++{
+ 
+ /**  node index, we hold the node address in a vector and reference it by index */
+ typedef size_t nSearchTreeNode;
+@@ -539,4 +543,7 @@
+     return result;
+ }
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // SEARCHTREE_H
+--- a/src/plugins/codecompletion/parser/expression.h
++++ b/src/plugins/codecompletion/parser/expression.h
+@@ -8,6 +8,10 @@
+ 
+ #include <wx/string.h>
+ #include <vector>
++
++
++namespace CodeCompletionInternals
++{
+ 
+ class ExpressionNode
+ {
+@@ -102,4 +106,7 @@
+     long          m_Result; /// the calculated value
+ };
+ 
++
++} // namespace CodeCompletionInternals
++
+ #endif // EXPRESSION_H
+--- a/src/plugins/codecompletion/Makefile.am
++++ b/src/plugins/codecompletion/Makefile.am
+@@ -8,7 +8,15 @@
+ 
+ pluginlib_LTLIBRARIES = libcodecompletion.la
+ 
+-libcodecompletion_la_LDFLAGS = @MODULE_SHARED_LDFLAGS@ -version-info 0:1:0 -no-undefined -avoid-version
++# Plugins register through static initializers, not exported entry points.
++# On macOS, dyld coalesces exported weak C++ symbols even between different
++# plugins. clangd_client has classes with the same names but different layouts
++# (e.g. ParseManager); sharing their inline methods corrupts parser pointers.
++if DARWIN
++macos_plugin_LDFLAGS = -Wl,-unexported_symbols_list,$(srcdir)/macos-unexported-symbols.list
++endif
++
++libcodecompletion_la_LDFLAGS = @MODULE_SHARED_LDFLAGS@ -version-info 0:1:0 -no-undefined -avoid-version $(macos_plugin_LDFLAGS)
+ 
+ libcodecompletion_la_LIBADD = ../../sdk/libcodeblocks.la\
+ 			$(WX_LIBS)
+@@ -72,6 +80,7 @@
+ 			parser/expression.h
+ 
+ EXTRA_DIST = $(srcdir)/*.cbp \
++		macos-unexported-symbols.list \
+ 		cctest \
+ 		testing \
+ 		wxsmith
+--- a/src/plugins/codecompletion/Makefile.in
++++ b/src/plugins/codecompletion/Makefile.in
+@@ -534,7 +534,8 @@
+ 
+ pluginlibdir = $(pkglibdir)/plugins
+ pluginlib_LTLIBRARIES = libcodecompletion.la
+-libcodecompletion_la_LDFLAGS = @MODULE_SHARED_LDFLAGS@ -version-info 0:1:0 -no-undefined -avoid-version
++@DARWIN_TRUE@macos_plugin_LDFLAGS = -Wl,-unexported_symbols_list,$(srcdir)/macos-unexported-symbols.list
++libcodecompletion_la_LDFLAGS = @MODULE_SHARED_LDFLAGS@ -version-info 0:1:0 -no-undefined -avoid-version $(macos_plugin_LDFLAGS)
+ libcodecompletion_la_LIBADD = ../../sdk/libcodeblocks.la $(WX_LIBS) \
+ 	$(am__append_1)
+ libcodecompletion_la_SOURCES = ccoptionsdlg.cpp \
+@@ -592,6 +593,7 @@
+ 			parser/expression.h
+ 
+ EXTRA_DIST = $(srcdir)/*.cbp \
++		macos-unexported-symbols.list \
+ 		cctest \
+ 		testing \
+ 		wxsmith
+--- /dev/null
++++ b/src/plugins/codecompletion/macos-unexported-symbols.list
+@@ -0,0 +1,3 @@
++# Code::Blocks discovers this plugin through its static PluginRegistrant.
++# Keep every definition local, including weak inline methods and templates.
++*
+--- a/src/plugins/codecompletion/cctest/parsemanager_test.h
++++ b/src/plugins/codecompletion/cctest/parsemanager_test.h
+@@ -4,6 +4,8 @@
+ 
+ #include "parser_base.h"
+ #include "parsemanager_base.h"
++
++using namespace CodeCompletionInternals;
+ 
+ class ParseManagerTest : public ParseManagerBase
+ {
+--- a/src/plugins/codecompletion/cctest/cctest_frame.cpp
++++ b/src/plugins/codecompletion/cctest/cctest_frame.cpp
+@@ -35,6 +35,8 @@
+ #include <wx/progdlg.h>
+ #include <wx/textdlg.h>
+ #include <wx/tokenzr.h>
++
++using namespace CodeCompletionInternals;
+ 
+ //(*IdInit(CCTestFrame)
+ const wxWindowID CCTestFrame::ID_CHK_HIDE = wxNewId();
+--- a/src/plugins/codecompletion/cctest/parsemanager_test.cpp
++++ b/src/plugins/codecompletion/cctest/parsemanager_test.cpp
+@@ -9,6 +9,8 @@
+ 
+ #include <wx/textfile.h>
+ #include <wx/tokenzr.h>
++
++using namespace CodeCompletionInternals;
+ 
+ #define CC_NATIVEPARSERTEST_DEBUG_OUTPUT 0
+ 
+--- a/src/plugins/codecompletion/cctest/cctest_app.cpp
++++ b/src/plugins/codecompletion/cctest/cctest_app.cpp
+@@ -109,6 +109,8 @@
+ 
+ #include "cctest_frame.h"
+ 
++using namespace CodeCompletionInternals;
++
+ namespace CCTestAppGlobal
+ {
+     // global variable to ease handling of include directories and header files
+--- a/src/plugins/codecompletion/cctest/cctest_frame.h
++++ b/src/plugins/codecompletion/cctest/cctest_frame.h
+@@ -25,6 +25,8 @@
+ //*)
+ 
+ #include <wx/fdrepdlg.h>
++
++using namespace CodeCompletionInternals;
+ 
+ class wxProgressDialog;
+ 

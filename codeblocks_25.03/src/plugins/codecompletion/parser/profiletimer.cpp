@@ -1,0 +1,72 @@
+/*
+ * This file is part of the Code::Blocks IDE and licensed under the GNU General Public License, version 3
+ * http://www.gnu.org/licenses/gpl-3.0.html
+ *
+ * $Revision: 13103 $
+ * $Id: profiletimer.cpp 13103 2022-12-09 14:16:20Z wh11204 $
+ * $HeadURL: https://svn.code.sf.net/p/codeblocks/code/branches/release-25.03/src/plugins/codecompletion/parser/profiletimer.cpp $
+ */
+
+#include "profiletimer.h"
+
+#include "manager.h"
+#include "logmanager.h"
+
+
+namespace CodeCompletionInternals
+{
+
+ProfileTimer::ProfileMap ProfileTimer::m_ProfileMap;
+
+ProfileTimerData::ProfileTimerData() : m_CallTimes(0), m_Count(0)
+{
+    m_StopWatch.Pause();
+}
+
+void ProfileTimerData::Zero()
+{
+    m_StopWatch.Start();
+    m_StopWatch.Pause();
+    m_CallTimes = 0;
+    m_Count = 0;
+}
+
+ProfileTimerHelper::ProfileTimerHelper(ProfileTimerData& profileTimerData) :
+    m_ProfileTimerData(profileTimerData)
+{
+    if (m_ProfileTimerData.m_Count++ == 0)
+        m_ProfileTimerData.m_StopWatch.Resume();
+}
+
+ProfileTimerHelper::~ProfileTimerHelper()
+{
+    if (--m_ProfileTimerData.m_Count == 0)
+        m_ProfileTimerData.m_StopWatch.Pause();
+}
+
+/* static */ size_t ProfileTimer::Registry(ProfileTimerData* ptd, const wxString& funcName)
+{
+    m_ProfileMap[ptd] = funcName;
+    return 1;
+}
+
+/* static */ void ProfileTimer::Log()
+{
+    for (ProfileMap::iterator it = m_ProfileMap.begin(); it != m_ProfileMap.end(); ++it)
+    {
+        const long totalTime = it->first->m_StopWatch.Time();
+        wxString log;
+        log.Printf(wxString::Format("\"%s\" used time is %ld minute(s), %ld.%03ld seconds; call times is %zu.",
+                   it->second,
+                   (totalTime / 60000),
+                   (totalTime / 1000) % 60,
+                   (totalTime % 1000),
+                   it->first->m_CallTimes));
+#ifndef CC_PARSER_TEST
+        Manager::Get()->GetLogManager()->DebugLog(log);
+#endif
+        it->first->Zero();
+    }
+}
+
+} // namespace CodeCompletionInternals

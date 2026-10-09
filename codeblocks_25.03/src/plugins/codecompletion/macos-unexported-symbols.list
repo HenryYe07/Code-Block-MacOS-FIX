@@ -1,0 +1,3 @@
+# Code::Blocks discovers this plugin through its static PluginRegistrant.
+# Keep every definition local, including weak inline methods and templates.
+*

@@ -1,0 +1,19 @@
+--- a/src/src/splashscreen.cpp
++++ b/src/src/splashscreen.cpp
+@@ -70,6 +70,16 @@
+     dc.DrawText(release,  x_offset, y - lf_height + lf_descend);
+ #endif
+ 
++#ifdef __WXMAC__
++    // Identify this macOS repair build without changing the upstream artwork.
++    const wxString repairLabel = wxString::FromUTF8("HenryYe修复版 支持新的MacOS");
++    dc.SetFont(wxFont(11, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD));
++    dc.SetTextForeground(wxColour(45, 65, 85));
++    dc.GetTextExtent(repairLabel, &w, &h);
++    dc.DrawText(repairLabel, text_center - w/2, 258 - h/2);
++    dc.SetTextForeground(*wxBLACK);
++#endif
++
+     if (PluginManager::GetSafeMode())
+     {
+         wxCoord sm_width, sm_height, sm_descend;

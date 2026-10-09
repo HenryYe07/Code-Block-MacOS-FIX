@@ -1,0 +1,316 @@
+--- a/src/sdk/encodingdetector.cpp
++++ b/src/sdk/encodingdetector.cpp
+@@ -24,26 +24,15 @@
+ #include "nsError.h"
+ #include "nsUniversalDetector.h"
+ 
+-#include <wx/encconv.h>
++#include <wx/strconv.h>
++#include <limits>
++#include <vector>
+ 
+ /* ----------------------------------------------
+  *  Some detection code is borrowed from MadEdit,
+  *  but modified to suit C::B. Other portions are
+  *  using the Mozilla universal char detector.
+  * ---------------------------------------------- */
+-
+-/// Convert the char buffer to wxString and if there are any null-terminating characters at the end - remove them.
+-inline wxString makeStringNoNull(const wxWCharBuffer &wideBuff)
+-{
+-    wxString result(wideBuff);
+-    if (!result.empty())
+-    {
+-        wxString::size_type ii = result.find_last_not_of(wxT('\0'));
+-        if (ii != wxString::npos)
+-            result.resize(ii + 1);
+-    }
+-    return result;
+-}
+ 
+ class EncodingDetectorImpl : public nsUniversalDetector
+ {
+@@ -66,36 +55,31 @@
+             if (!file.IsOpened())
+                 return false;
+ 
+-            size_t size = file.Length();
++            const wxFileOffset length = file.Length();
++            if (length < 0 || static_cast<unsigned long long>(length) >
++                std::numeric_limits<size_t>::max() - 4)
++                return false;
++
++            const size_t size = static_cast<size_t>(length);
++            std::vector<wxByte> buffer(size + 4, 0);
++            const ssize_t readBytes = file.Read(buffer.data(), size);
++            if (readBytes < 0 || static_cast<size_t>(readBytes) != size)
++                return false;
++
++            return DetectEncoding(buffer.data(), size);
++        }
++
++        bool DetectEncoding(const wxByte* buffer, size_t size)
++        {
++            if (!buffer)
++                return false;
+             if (size == 0)
+             {
+-                file.Close();
+-                return false;
+-            }
+-
+-            wxByte* buffer = (wxByte*) malloc(sizeof(wxByte) * (size + 4));
+-            if (!buffer)
+-            {
+-                file.Close();
+-                return false;
+-            }
+-            buffer[size + 0] = 0;
+-            buffer[size + 1] = 0;
+-            buffer[size + 2] = 0;
+-            buffer[size + 3] = 0;
+-
+-            size_t readBytes = file.Read((void*)buffer, size);
+-            bool result = false;
+-            if (readBytes > 0)
+-                result = DetectEncoding(buffer, size);
+-
+-            file.Close();
+-            free(buffer);
+-            return result;
+-        }
+-
+-        bool DetectEncoding(const wxByte* buffer, size_t size)
+-        {
++                m_Encoding = wxFONTENCODING_UTF8;
++                m_ConvStr.clear();
++                return true;
++            }
++
+             ConfigManager* cfgMgr = Manager::Get()->GetConfigManager(_T("editor"));
+             const wxString &encname = cfgMgr->Read(_T("/default_encoding"),
+                                                    wxLocale::GetSystemEncodingName());
+@@ -195,10 +179,10 @@
+                 Manager::Get()->GetLogManager()->DebugLog(msg);
+             }
+ 
+-            if (!ConvertToWxString(buffer, size) && m_UseLog)
+-                Manager::Get()->GetLogManager()->DebugLog(_T("Something seriously went wrong while converting file content to wxString!"));
+-
+-            return true;
++            const bool converted = ConvertToWxString(buffer, size);
++            if (!converted && m_UseLog)
++                Manager::Get()->GetLogManager()->DebugLog(_T("File content cannot be decoded with the selected encoding."));
++            return converted;
+         }
+ 
+         // Stolen from  https://github.com/etexteditor/e/blob/master/src/Strings.cpp
+@@ -388,166 +372,50 @@
+         int            m_BOMSizeInBytes;
+         wxFontEncoding m_Encoding;
+ 
++        // All encodings use one length-aware conversion path. In particular, do not
++        // enter wxEncodingConverter's legacy Mac single-byte lookup tables.
+         bool ConvertToWxString(const wxByte* buffer, size_t size)
+         {
+-            LogManager* logmgr = Manager::Get()->GetLogManager();
+-            wxString    logmsg;
+-
+-            if (!buffer || size == 0)
+-            {
+-                if (m_UseLog)
+-                {
+-                    logmsg.Printf(_T("Encoding conversion has failed (buffer is empty)!"));
+-                    logmgr->DebugLog(logmsg);
+-                }
+-                return false; // Nothing we can do...
+-            }
+-
+-            if (m_BOMSizeInBytes > 0)
+-            {
+-                for (int i = 0; i < m_BOMSizeInBytes; ++i)
+-                    buffer++;
+-            }
+-
+-            size_t outlen = 0;
+-
+-            /* NOTE (Biplab#5#): FileManager returns a buffer with 4 extra NULL chars appended.
+-               But the buffer size is returned sans the NULL chars */
+-
+-            wxWCharBuffer wideBuff;
+-
+-            // if possible use the special conversion-routines, they are much faster than wxCSCov (at least on linux)
+-            if      ( m_Encoding == wxFONTENCODING_UTF7 )
+-            {
+-                wxMBConvUTF7 conv;
+-                wideBuff = conv.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-            }
+-            else if ( m_Encoding == wxFONTENCODING_UTF8 )
+-            {
+-                wxMBConvUTF8 conv;
+-                wideBuff = conv.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-            }
+-            else if ( m_Encoding == wxFONTENCODING_UTF16BE )
+-            {
+-                wxMBConvUTF16BE conv;
+-                wideBuff = conv.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-            }
+-            else if ( m_Encoding == wxFONTENCODING_UTF16LE )
+-            {
+-                wxMBConvUTF16LE conv;
+-                wideBuff = conv.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-            }
+-            else if ( m_Encoding == wxFONTENCODING_UTF32BE )
+-            {
+-                wxMBConvUTF32BE conv;
+-                wideBuff = conv.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-            }
+-            else if ( m_Encoding == wxFONTENCODING_UTF32LE )
+-            {
+-                wxMBConvUTF32LE conv;
+-                wideBuff = conv.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-            }
+-            else
+-            {
+-                // try wxEncodingConverter first, even it it only works for
+-                // wxFONTENCODING_ISO8859_1..15, wxFONTENCODING_CP1250..1257 and wxFONTENCODING_KOI8
+-                // but it's much, much faster than wxCSConv (at least on Linux)
+-                wxEncodingConverter conv;
+-                wchar_t* tmp = new wchar_t[size + 4 - m_BOMSizeInBytes];
+-                if (  conv.Init(m_Encoding, wxFONTENCODING_UNICODE)
+-                   && conv.Convert((const char*)buffer, tmp) )
+-                {
+-                    wideBuff = tmp;
+-                    outlen = size + 4 - m_BOMSizeInBytes; // should be correct, because Convert has returned true
+-                    if (m_UseLog && outlen>0)
+-                    {
+-                        logmsg.Printf("Conversion succeeded using wxEncodingConverter "
+-                                      "(buffer size = %zu, converted size = %zu.", size, outlen);
+-                        logmgr->DebugLog(logmsg);
+-                    }
+-                }
+-                else
+-                {
+-                    // try wxCSConv, if nothing else works
+-                    wxCSConv csconv(m_Encoding);
+-                    if (csconv.IsOk())
+-                    {
+-                        wideBuff = csconv.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-                        if (m_UseLog && outlen>0)
+-                        {
+-                            logmsg.Printf("Conversion succeeded using wxCSConv "
+-                                          "(buffer size = %zu, converted size = %zu.", size, outlen);
+-                            logmgr->DebugLog(logmsg);
+-                        }
+-                    }
+-                }
+-                delete [] tmp;
+-            }
+-
+-            if (outlen>0)
+-            {
+-                m_ConvStr = makeStringNoNull(wideBuff);
+-                return true; // Done.
+-            }
+-
+-            // Here, outlen == 0, so an error occurred during conversion.
+-            if (m_UseLog)
+-            {
+-                logmsg.Printf(_T("Encoding conversion using settings has failed!\n"
+-                                 "Encoding chosen was: %s (ID: %d)"),
+-                              wxFontMapper::Get()->GetEncodingDescription(m_Encoding).wx_str(),
+-                              m_Encoding);
+-                logmgr->DebugLog(logmsg);
+-            }
+-
+-            // Try system locale as fall-back (if requested by the settings)
+-            ConfigManager* cfgMgr = Manager::Get()->GetConfigManager(_T("editor"));
+-            if (cfgMgr->ReadBool(_T("/default_encoding/use_system"), true))
+-            {
+-                if (platform::windows)
+-                {
+-                    if (m_UseLog)
+-                        logmgr->DebugLog(_T("Trying system locale as fallback..."));
+-
+-                    m_Encoding = wxLocale::GetSystemEncoding();
+-                }
+-                else
+-                {
+-                    // We can rely on the UTF-8 detection code ;-)
+-                    if (m_UseLog)
+-                        logmgr->DebugLog(_T("Trying ISO-8859-1 as fallback..."));
+-
+-                    m_Encoding = wxFONTENCODING_ISO8859_1;
+-                }
+-
+-                wxCSConv conv_system(m_Encoding);
+-                wideBuff = conv_system.cMB2WC((const char*)buffer, size + 4 - m_BOMSizeInBytes, &outlen);
+-                m_ConvStr = makeStringNoNull(wideBuff);
+-
+-                if (outlen == 0)
+-                {
+-                    if (m_UseLog)
+-                    {
+-                        logmsg.Printf(_T("Encoding conversion using system locale fallback has failed!\n"
+-                                         "Last encoding choosen was: %s (ID: %d)\n"
+-                                         "Don't know what to do."),
+-                                      wxFontMapper::Get()->GetEncodingDescription(m_Encoding).c_str(),
+-                                      m_Encoding);
+-                        logmgr->DebugLog(logmsg);
+-                    }
+-                    return false; // Nothing we can do...
+-                }
+-            }
+-            else
+-            {
+-                if (m_UseLog)
+-                {
+-                    logmgr->DebugLog(_T("Encoding conversion has seriously failed!\n"
+-                                        "Don't know what to do."));
+-                }
+-                return false; // Nothing we can do...
+-            }
+-
++            if (!buffer || m_BOMSizeInBytes < 0 ||
++                static_cast<size_t>(m_BOMSizeInBytes) > size)
++                return false;
++
++            buffer += m_BOMSizeInBytes;
++            size -= m_BOMSizeInBytes;
++            if (size == 0)
++            {
++                m_ConvStr.clear();
++                return true;
++            }
++
++            if (Decode(buffer, size, m_Encoding))
++                return true;
++
++            ConfigManager* cfg = Manager::Get()->GetConfigManager(_T("editor"));
++            if (!cfg->ReadBool(_T("/default_encoding/use_system"), true))
++                return false;
++
++            const wxFontEncoding fallback = platform::windows
++                ? wxLocale::GetSystemEncoding() : wxFONTENCODING_ISO8859_1;
++            if (!Decode(buffer, size, fallback))
++                return false;
++            m_Encoding = fallback;
++            return true;
++        }
++
++        bool Decode(const wxByte* buffer, size_t size, wxFontEncoding encoding)
++        {
++            wxCSConv converter(encoding);
++            if (!converter.IsOk())
++                return false;
++
++            size_t length = 0;
++            const wxWCharBuffer decoded = converter.cMB2WC(
++                reinterpret_cast<const char*>(buffer), size, &length);
++            if (!decoded.data())
++                return false;
++
++            m_ConvStr.assign(decoded.data(), length);
+             return true;
+         }
+ 

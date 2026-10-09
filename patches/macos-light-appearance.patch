@@ -1,0 +1,12 @@
+--- a/codeblocks.plist.in
++++ b/codeblocks.plist.in
+@@ -2,6 +2,9 @@
+ <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+ <plist version="1.0">
+ <dict>
++	<!-- Keep this macOS build in the light Aqua appearance. -->
++	<key>NSRequiresAquaSystemAppearance</key>
++	<true/>
+ 	<key>NSPrincipalClass</key>
+ 	<string>NSApplication</string>
+ 	<key>CFBundleDevelopmentRegion</key>

@@ -1,0 +1,60 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Code::Blocks new file wizard script
+//
+// Project: C/C++ header file
+// Author:  Yiannis Mandravellos
+//
+////////////////////////////////////////////////////////////////////////////////
+
+header_contents <- "#ifndef GUARD\n"
++ "#define GUARD\n\n"
++ "AUTO_GENERATED_CONTENTS\n\n"
++ "#endif // GUARD\n";
+
+function BeginWizard()
+{
+    // this is the text that will appear in the start (intro) page
+    local intro_msg = _("Welcome to the new C/C++ header file wizard!\n") +
+                      _("This wizard will guide you to create a new C/C++ header file.\n\n") +
+                      _("When you're ready to proceed, please click \"Next\"...");
+
+    // add builtin pages
+    Wizard.AddInfoPage(_T("HFileIntro"), intro_msg); // intro
+    Wizard.AddFilePathPage(true); // select filename (header guard required for header files)
+
+    Wizard.SetFilePathSelectionFilter(_("C/C++ header files") + _T(" (*.h;*.hpp;*.hxx;*.hh)|*.h;*.hpp;*.hxx;*.hh"));
+}
+
+function CreateFiles()
+{
+    local fname = Wizard.GetFileName();
+    local ed    = GetEditorManager();
+    if (IsNull(ed))
+    {
+        ShowError(_("The wizard could not locate the editor manager."));
+    }
+
+    local ed_new = ed.New(fname);
+    if (IsNull(ed_new))
+    {
+        ShowError(_("The wizard could not create a new file.\nMaybe the target folder is write-protected?"));
+    }
+    else
+    {
+        // succeeded -> add header guard
+        local guard = Wizard.GetFileHeaderGuard();
+        local text = _T(header_contents);
+        local auto_text = ed_new.GetText();
+        text.Replace(_T("GUARD"), guard);
+        text.Replace(_T("AUTO_GENERATED_CONTENTS"), auto_text);
+        ed_new.SetText(text);
+
+        // succeeded -> add file to project if needed
+        if (Wizard.GetFileAddToProject())
+        {
+            AddFileToTargets(Wizard, fname);
+        }
+    }
+    return fname;
+}
